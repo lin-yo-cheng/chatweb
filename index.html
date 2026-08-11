@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>chatweb</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="login-view">
+    <form id="login-form">
+      <h1>登入 chatweb</h1>
+      <input id="login-email" type="text" placeholder="帳號 (email)" autocomplete="username" required />
+      <input id="login-password" type="password" placeholder="密碼" autocomplete="current-password" required />
+      <div id="login-error"></div>
+      <button id="login-btn" type="submit">登入</button>
+    </form>
+  </div>
+
+  <div id="app-view" class="hidden">
+    <header>
+      <h1>chatweb</h1>
+      <button id="logout-btn">登出</button>
+    </header>
+    <div id="main-area">
+      <div id="friend-list" class="hidden"></div>
+      <div id="chat-panel">
+        <div id="chat-placeholder">選擇一位朋友開始對話</div>
+        <div id="message-list" class="hidden"></div>
+        <form id="composer" class="hidden">
+          <input id="text-input" type="text" placeholder="輸入訊息…" autocomplete="off" />
+          <label id="image-label" for="image-input">📷</label>
+          <input id="image-input" type="file" accept="image/*" />
+          <button id="send-btn" type="submit">送出</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
