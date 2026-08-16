@@ -20,15 +20,28 @@
   <div id="app-view" class="hidden">
     <header>
       <h1>chatweb</h1>
+      <div id="peer-status" class="hidden">
+        <span id="peer-status-dot" class="status-dot"></span>
+        <span id="peer-status-text"></span>
+      </div>
       <button id="logout-btn">登出</button>
     </header>
     <div id="main-area">
       <div id="friend-list" class="hidden"></div>
       <div id="chat-panel">
         <div id="chat-placeholder">選擇一位朋友開始對話</div>
-        <div id="message-list" class="hidden"></div>
+        <div id="chat-body" class="hidden">
+          <div id="chat-background"></div>
+          <video id="chat-background-video" class="hidden" autoplay loop muted playsinline></video>
+          <div id="chat-background-fade"></div>
+          <div id="message-list"></div>
+        </div>
+        <div id="reply-preview" class="hidden">
+          <div id="reply-preview-text"></div>
+          <button id="reply-cancel-btn" type="button">×</button>
+        </div>
         <form id="composer" class="hidden">
-          <input id="text-input" type="text" placeholder="輸入訊息…" autocomplete="off" />
+          <textarea id="text-input" rows="1" placeholder="輸入訊息…（Enter 送出，Shift+Enter 換行）" autocomplete="off"></textarea>
           <label id="image-label" for="image-input">📷</label>
           <input id="image-input" type="file" accept="image/*" />
           <button id="send-btn" type="submit">送出</button>

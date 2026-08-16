@@ -53,6 +53,9 @@ create table if not exists public.messages (
 create index if not exists messages_friend_id_created_at_idx
   on public.messages (friend_id, created_at);
 
+alter table public.messages
+  add column if not exists reply_to uuid references public.messages(id) on delete set null;
+
 alter table public.messages enable row level security;
 
 -- 朋友只能看自己那條對話串；owner 能看所有對話串
@@ -136,7 +139,44 @@ create policy "delete own thread images or owner deletes any"
   );
 
 -- ------------------------------------------------------------
--- 6. 新增朋友帳號後，記得手動執行這行（把值換成剛建立的朋友帳號）
+-- 6. 已讀進度表：記錄每個人在每個對話串看到哪個時間點
+--    未讀分隔線、朋友清單未讀徽章、已讀顯示都靠這張表
+-- ------------------------------------------------------------
+create table if not exists public.read_state (
+  friend_id uuid not null references auth.users(id) on delete cascade,
+  reader_id uuid not null references auth.users(id) on delete cascade,
+  last_read_at timestamptz not null default now(),
+  primary key (friend_id, reader_id)
+);
+
+alter table public.read_state enable row level security;
+
+-- 對話串的兩個人都能互相看到彼此的已讀進度（用來顯示「已讀」跟算未讀數）
+create policy "thread participants read read_state"
+  on public.read_state for select
+  using (
+    auth.uid() = friend_id
+    or auth.uid() = '1daffde3-7672-43ff-b34e-7552586b1f16'
+  );
+
+-- 每個人只能寫自己的已讀進度，且只能寫自己有份的對話串
+create policy "self writes own read_state"
+  on public.read_state for insert
+  with check (
+    reader_id = auth.uid()
+    and (friend_id = auth.uid() or auth.uid() = '1daffde3-7672-43ff-b34e-7552586b1f16')
+  );
+
+create policy "self updates own read_state"
+  on public.read_state for update
+  using (reader_id = auth.uid())
+  with check (reader_id = auth.uid());
+
+alter publication supabase_realtime add table public.read_state;
+alter table public.read_state replica identity full;
+
+-- ------------------------------------------------------------
+-- 7. 新增朋友帳號後，記得手動執行這行（把值換成剛建立的朋友帳號）
 --    example:
 --    insert into public.friends (id, display_name) values ('友人的-uuid', '小明');
 -- ------------------------------------------------------------

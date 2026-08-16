@@ -5,11 +5,12 @@
 body {
   margin: 0;
   font-family: -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
-  background: #f3f4f6;
+  background: #d1d5db;
   color: #1f2933;
   height: 100vh;
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .hidden {
@@ -18,7 +19,6 @@ body {
 
 /* ---------- Login ---------- */
 #login-view {
-  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -71,24 +71,55 @@ body {
 
 /* ---------- App shell ---------- */
 #app-view {
-  flex: 1;
+  width: 480px;
+  height: 720px;
+  min-width: 340px;
+  min-height: 420px;
+  max-width: 100vw;
+  max-height: 100vh;
+  resize: both;
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.18);
+  background: #f3f4f6;
 }
 
 header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 10px 16px;
   background: #fff;
   border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
 }
 
 header h1 {
   font-size: 16px;
   margin: 0;
+}
+
+#peer-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d1d5db;
+  flex-shrink: 0;
+}
+
+.status-dot.online {
+  background: #22c55e;
 }
 
 #logout-btn {
@@ -114,6 +145,9 @@ header h1 {
 }
 
 .friend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px;
   cursor: pointer;
   border-bottom: 1px solid #f3f4f6;
@@ -127,6 +161,26 @@ header h1 {
 .friend-item.active {
   background: #e0e7ff;
   font-weight: 600;
+}
+
+.friend-item .friend-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unread-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  flex-shrink: 0;
 }
 
 /* ---------- Chat panel ---------- */
@@ -146,17 +200,67 @@ header h1 {
   font-size: 14px;
 }
 
-#message-list {
+#chat-body {
+  position: relative;
   flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#chat-background {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+}
+
+#chat-background-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #f3f4f6;
+  z-index: 0;
+}
+
+#chat-background-fade {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.72);
+  z-index: 1;
+}
+
+#message-list {
+  position: relative;
+  z-index: 2;
+  height: 100%;
   overflow-y: auto;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-attachment: local;
+  background: transparent;
+}
+
+.unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ef4444;
+  font-size: 12px;
+  margin: 4px 0;
+}
+
+.unread-divider::before,
+.unread-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #ef4444;
+  opacity: 0.4;
 }
 
 .msg-row {
@@ -178,25 +282,42 @@ header h1 {
   word-break: break-word;
 }
 
-.delete-btn {
+.bubble > .msg-text {
+  white-space: pre-wrap;
+}
+
+.msg-toolbar {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: none;
-  background: #6b7280;
-  color: #fff;
-  font-size: 13px;
-  line-height: 1;
-  cursor: pointer;
+  top: -10px;
+  right: -4px;
+  display: flex;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.15s;
 }
 
-.bubble:hover .delete-btn {
+.bubble:hover .msg-toolbar {
   opacity: 1;
+}
+
+.msg-toolbar button {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.delete-btn {
+  background: #6b7280;
+  font-size: 13px;
+}
+
+.reply-btn {
+  background: #6366f1;
 }
 
 .msg-row.mine .bubble {
@@ -218,20 +339,84 @@ header h1 {
   margin-top: 4px;
 }
 
+.read-receipt {
+  font-size: 10px;
+  opacity: 0.7;
+  margin-top: 2px;
+  text-align: right;
+}
+
+.quote-block {
+  display: block;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 6px;
+  font-size: 12px;
+  opacity: 0.8;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-row.mine .quote-block {
+  border-left-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.15);
+}
+
+#reply-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #eef2ff;
+  border-top: 1px solid #e5e7eb;
+  font-size: 13px;
+  color: #4b5563;
+  flex-shrink: 0;
+}
+
+#reply-preview-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-left: 3px solid #6366f1;
+  padding-left: 8px;
+}
+
+#reply-cancel-btn {
+  border: none;
+  background: none;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
 #composer {
   display: flex;
+  align-items: flex-end;
   gap: 8px;
   padding: 12px;
   background: #fff;
   border-top: 1px solid #e5e7eb;
+  flex-shrink: 0;
 }
 
 #text-input {
   flex: 1;
   padding: 10px 12px;
   border: 1px solid #d1d5db;
-  border-radius: 20px;
+  border-radius: 16px;
   font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  max-height: 120px;
+  overflow-y: auto;
+  line-height: 1.4;
 }
 
 #composer button,
@@ -245,6 +430,7 @@ header h1 {
   cursor: pointer;
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 #image-input {
