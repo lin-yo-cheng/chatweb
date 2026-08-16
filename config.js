@@ -5,3 +5,6 @@ export const SUPABASE_ANON_KEY = 'sb_publishable_JS1oGdVX00wcpU59Y-phoQ_kVp8OmtA
 
 // 你自己（owner）帳號的 UUID，跟 supabase/schema.sql 裡填的 <OWNER_UUID> 要一致
 export const OWNER_UUID = '1daffde3-7672-43ff-b34e-7552586b1f16';
+
+// 朋友登入後，畫面上稱呼你的名字
+export const OWNER_DISPLAY_NAME = 'YCLin';

@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { OWNER_UUID } from './config.js';
+import { OWNER_UUID, OWNER_DISPLAY_NAME } from './config.js';
 import {
   loadMessages,
   sendTextMessage,
@@ -93,15 +93,10 @@ loginForm.addEventListener('submit', async (e) => {
 });
 
 logoutBtn.addEventListener('click', async () => {
-  unsubscribeFromThread(currentChannel);
-  currentChannel = null;
-  unsubscribeFromThread(ownerInboxChannel);
-  ownerInboxChannel = null;
-  currentThreadFriendId = null;
-  stopTitleFlash();
   await supabase.auth.signOut();
-  appView.classList.add('hidden');
-  loginView.classList.remove('hidden');
+  // 整頁重新整理，確保上一個帳號的所有殘留狀態（訂閱、進行中的讀取）都被清乾淨，
+  // 不會在切換帳號時互相污染畫面
+  location.reload();
 });
 
 // ---------- Composer: reply + send + Enter-to-send ----------
@@ -311,7 +306,7 @@ async function initApp(user) {
     friendListEl.classList.add('hidden');
     setSidebarCollapsed(true, false);
     peerStatusEl.classList.remove('hidden');
-    peerStatusText.textContent = '對方';
+    peerStatusText.textContent = OWNER_DISPLAY_NAME;
     const { data: myRow } = await supabase
       .from('friends')
       .select('*')
