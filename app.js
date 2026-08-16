@@ -27,7 +27,15 @@ const peerStatusEl = document.getElementById('peer-status');
 const peerStatusDot = document.getElementById('peer-status-dot');
 const peerStatusText = document.getElementById('peer-status-text');
 
+const mainAreaEl = document.getElementById('main-area');
 const friendListEl = document.getElementById('friend-list');
+const filterBtn = document.getElementById('filter-btn');
+const collapseBtn = document.getElementById('collapse-btn');
+const filterPanel = document.getElementById('filter-panel');
+const friendItemsEl = document.getElementById('friend-items');
+const panelDivider = document.getElementById('panel-divider');
+const chatPanelHeader = document.getElementById('chat-panel-header');
+const showListBtn = document.getElementById('show-list-btn');
 const chatPlaceholder = document.getElementById('chat-placeholder');
 const chatBody = document.getElementById('chat-body');
 const chatBackground = document.getElementById('chat-background');
@@ -57,6 +65,11 @@ let peerLastReadAt = null;
 let friendDisplayNames = new Map();
 let onlineIds = new Set();
 let titleFlashTimer = null;
+let allFriends = [];
+
+function isMobile() {
+  return window.matchMedia('(max-width: 640px)').matches;
+}
 
 // ---------- Login / logout ----------
 
@@ -179,7 +192,7 @@ function notify(body) {
 
 function updateOnlineUI() {
   if (currentIsOwner) {
-    friendListEl.querySelectorAll('.friend-item').forEach((item) => {
+    friendItemsEl.querySelectorAll('.friend-item').forEach((item) => {
       const dot = item.querySelector('.status-dot');
       if (dot) dot.classList.toggle('online', onlineIds.has(item.dataset.friendId));
     });
@@ -187,6 +200,84 @@ function updateOnlineUI() {
     peerStatusDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
   }
 }
+
+// ---------- Sidebar: collapse, resize divider, filter panel ----------
+
+const SIDEBAR_COLLAPSED_KEY = 'chatweb-sidebar-collapsed';
+const SIDEBAR_WIDTH_KEY = 'chatweb-sidebar-width';
+const HIDDEN_FRIENDS_KEY = 'chatweb-hidden-friends';
+
+function loadHiddenFriendIds() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(HIDDEN_FRIENDS_KEY)) || []);
+  } catch {
+    return new Set();
+  }
+}
+
+let hiddenFriendIds = loadHiddenFriendIds();
+
+function setSidebarCollapsed(collapsed, persist) {
+  mainAreaEl.classList.toggle('sidebar-collapsed', collapsed);
+  if (currentIsOwner) {
+    chatPanelHeader.classList.toggle('hidden', !collapsed);
+  }
+  if (persist) localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(collapsed));
+}
+
+collapseBtn.addEventListener('click', () => setSidebarCollapsed(true, true));
+showListBtn.addEventListener('click', () => setSidebarCollapsed(false, true));
+
+filterBtn.addEventListener('click', () => {
+  filterPanel.classList.toggle('hidden');
+});
+
+function renderFilterPanel() {
+  filterPanel.innerHTML = '';
+  for (const friend of allFriends) {
+    const row = document.createElement('label');
+    row.className = 'filter-row';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !hiddenFriendIds.has(friend.id);
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) hiddenFriendIds.delete(friend.id);
+      else hiddenFriendIds.add(friend.id);
+      localStorage.setItem(HIDDEN_FRIENDS_KEY, JSON.stringify([...hiddenFriendIds]));
+      renderFriendItems();
+    });
+
+    const name = document.createElement('span');
+    name.textContent = friend.display_name;
+
+    row.appendChild(checkbox);
+    row.appendChild(name);
+    filterPanel.appendChild(row);
+  }
+}
+
+let dividerDragging = false;
+
+panelDivider.addEventListener('mousedown', (e) => {
+  dividerDragging = true;
+  panelDivider.classList.add('dragging');
+  e.preventDefault();
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!dividerDragging) return;
+  const rect = mainAreaEl.getBoundingClientRect();
+  const width = Math.max(120, Math.min(360, e.clientX - rect.left));
+  friendListEl.style.width = width + 'px';
+});
+
+document.addEventListener('mouseup', () => {
+  if (!dividerDragging) return;
+  dividerDragging = false;
+  panelDivider.classList.remove('dragging');
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, friendListEl.style.width);
+});
 
 // ---------- App init ----------
 
@@ -210,10 +301,15 @@ async function initApp(user) {
   if (currentIsOwner) {
     peerStatusEl.classList.add('hidden');
     friendListEl.classList.remove('hidden');
+    panelDivider.classList.remove('hidden');
+    const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (savedWidth) friendListEl.style.width = savedWidth;
+    setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true', false);
     await renderFriendList();
     ownerInboxChannel = subscribeToOwnerInbox(handleOwnerInboxInsert);
   } else {
     friendListEl.classList.add('hidden');
+    setSidebarCollapsed(true, false);
     peerStatusEl.classList.remove('hidden');
     peerStatusText.textContent = '對方';
     const { data: myRow } = await supabase
@@ -231,32 +327,47 @@ async function handleOwnerInboxInsert(row) {
 
   notify(`${friendDisplayNames.get(row.friend_id) ?? '朋友'}：${quoteSnippet(row)}`);
 
-  const item = friendListEl.querySelector(`[data-friend-id="${row.friend_id}"]`);
+  const friend = allFriends.find((f) => f.id === row.friend_id);
+  if (friend) friend.unread = (friend.unread || 0) + 1;
+
+  const item = friendItemsEl.querySelector(`[data-friend-id="${row.friend_id}"]`);
   if (item) {
     const badge = item.querySelector('.unread-badge');
-    const next = (parseInt(badge.textContent, 10) || 0) + 1;
-    badge.textContent = String(next);
+    badge.textContent = String(friend?.unread ?? 1);
     badge.classList.remove('hidden');
   }
 }
 
 async function renderFriendList() {
   const { data, error } = await supabase.from('friends').select('*').order('display_name');
-  friendListEl.innerHTML = '';
 
   if (error) {
-    friendListEl.textContent = '朋友名單載入失敗';
+    friendItemsEl.textContent = '朋友名單載入失敗';
     return;
   }
 
   const myReadStates = await getMyReadStates(OWNER_UUID);
   const lastReadByFriend = new Map(myReadStates.map((s) => [s.friend_id, s.last_read_at]));
 
+  allFriends = [];
   for (const friend of data) {
     friendDisplayNames.set(friend.id, friend.display_name);
+    const unread = await getUnreadCount(friend.id, lastReadByFriend.get(friend.id) ?? null, OWNER_UUID);
+    allFriends.push({ ...friend, unread });
+  }
+
+  renderFilterPanel();
+  renderFriendItems();
+}
+
+function renderFriendItems() {
+  friendItemsEl.innerHTML = '';
+
+  for (const friend of allFriends) {
+    if (hiddenFriendIds.has(friend.id)) continue;
 
     const item = document.createElement('div');
-    item.className = 'friend-item';
+    item.className = 'friend-item' + (friend.id === currentThreadFriendId ? ' active' : '');
     item.dataset.friendId = friend.id;
 
     const dot = document.createElement('span');
@@ -269,25 +380,21 @@ async function renderFriendList() {
     item.appendChild(name);
 
     const badge = document.createElement('span');
-    badge.className = 'unread-badge hidden';
-    badge.textContent = '0';
+    badge.className = 'unread-badge' + (friend.unread > 0 ? '' : ' hidden');
+    badge.textContent = String(friend.unread);
     item.appendChild(badge);
-
-    const unread = await getUnreadCount(friend.id, lastReadByFriend.get(friend.id) ?? null, OWNER_UUID);
-    if (unread > 0) {
-      badge.textContent = String(unread);
-      badge.classList.remove('hidden');
-    }
 
     item.addEventListener('click', () => {
       document.querySelectorAll('.friend-item').forEach((el) => el.classList.remove('active'));
       item.classList.add('active');
+      friend.unread = 0;
       badge.textContent = '0';
       badge.classList.add('hidden');
+      if (isMobile()) setSidebarCollapsed(true, false);
       openThread(friend.id, friend.background_image);
     });
 
-    friendListEl.appendChild(item);
+    friendItemsEl.appendChild(item);
   }
 
   updateOnlineUI();

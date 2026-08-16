@@ -2,11 +2,29 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>chatweb</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="assets/icons/icon-180.png" />
+  <link rel="icon" href="assets/icons/icon-192.png" />
+  <meta name="theme-color" content="#2563eb" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="bg-fx" aria-hidden="true">
+    <span class="bg-orb bg-orb-1"></span>
+    <span class="bg-orb bg-orb-2"></span>
+    <span class="bg-orb bg-orb-3"></span>
+    <span class="bg-scanline"></span>
+    <span class="bg-corner bg-corner-tl"></span>
+    <span class="bg-corner bg-corner-tr"></span>
+    <span class="bg-corner bg-corner-bl"></span>
+    <span class="bg-corner bg-corner-br"></span>
+  </div>
+
   <div id="login-view">
     <form id="login-form">
       <h1>登入 chatweb</h1>
@@ -27,8 +45,19 @@
       <button id="logout-btn">登出</button>
     </header>
     <div id="main-area">
-      <div id="friend-list" class="hidden"></div>
+      <div id="friend-list" class="hidden">
+        <div id="friend-list-header">
+          <button id="filter-btn" type="button" title="篩選清單">篩選</button>
+          <button id="collapse-btn" type="button" title="收合清單">« 收合</button>
+        </div>
+        <div id="filter-panel" class="hidden"></div>
+        <div id="friend-items"></div>
+      </div>
+      <div id="panel-divider" class="hidden"></div>
       <div id="chat-panel">
+        <div id="chat-panel-header" class="hidden">
+          <button id="show-list-btn" type="button">← 清單</button>
+        </div>
         <div id="chat-placeholder">選擇一位朋友開始對話</div>
         <div id="chat-body" class="hidden">
           <div id="chat-background"></div>
