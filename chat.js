@@ -93,7 +93,7 @@ export async function deleteMessage(row) {
   if (error) throw error;
 }
 
-export function subscribeToThread(friendId, { onInsert, onDelete, onReadStateChange }) {
+export function subscribeToThread(friendId, { onInsert, onDelete, onReadStateChange, onTyping }) {
   const channel = supabase
     .channel(`messages-${friendId}`)
     .on(
@@ -126,9 +126,15 @@ export function subscribeToThread(friendId, { onInsert, onDelete, onReadStateCha
       },
       (payload) => onReadStateChange?.(payload.new)
     )
+    .on('broadcast', { event: 'typing' }, (payload) => onTyping?.(payload.payload.senderId))
     .subscribe();
 
   return channel;
+}
+
+export function broadcastTyping(channel, senderId) {
+  if (!channel) return;
+  channel.send({ type: 'broadcast', event: 'typing', payload: { senderId } });
 }
 
 export function subscribeToOwnerInbox(onInsert) {

@@ -25,7 +25,11 @@
     <span class="bg-corner bg-corner-br"></span>
   </div>
 
-  <div id="login-view">
+  <div id="loading-view">
+    <div class="spinner"></div>
+  </div>
+
+  <div id="login-view" class="hidden">
     <form id="login-form">
       <h1>登入 chatweb</h1>
       <input id="login-email" type="text" placeholder="帳號 (email)" autocomplete="username" required />
@@ -65,18 +69,28 @@
           <div id="chat-background-fade"></div>
           <div id="message-list"></div>
         </div>
+        <div id="image-preview" class="hidden">
+          <img id="image-preview-img" alt="預覽圖片" />
+          <span id="image-preview-name"></span>
+          <button id="image-preview-cancel" type="button">×</button>
+        </div>
         <div id="reply-preview" class="hidden">
           <div id="reply-preview-text"></div>
           <button id="reply-cancel-btn" type="button">×</button>
         </div>
+        <div id="typing-indicator" class="hidden"></div>
         <form id="composer" class="hidden">
-          <textarea id="text-input" rows="1" placeholder="輸入訊息…（Enter 送出，Shift+Enter 換行）" autocomplete="off"></textarea>
+          <textarea id="text-input" rows="1" placeholder="輸入訊息…" autocomplete="off"></textarea>
           <label id="image-label" for="image-input">📷</label>
           <input id="image-input" type="file" accept="image/*" />
           <button id="send-btn" type="submit">送出</button>
         </form>
       </div>
     </div>
+  </div>
+
+  <div id="image-lightbox" class="hidden">
+    <img id="image-lightbox-img" alt="圖片" />
   </div>
 
   <script type="module" src="app.js"></script>

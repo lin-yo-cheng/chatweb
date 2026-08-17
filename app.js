@@ -7,6 +7,7 @@ import {
   subscribeToThread,
   subscribeToOwnerInbox,
   unsubscribeFromThread,
+  broadcastTyping,
   renderMessageNode,
   markThreadRead,
   getReadStates,
@@ -16,6 +17,7 @@ import {
 } from './chat.js';
 import { trackPresence, subscribeOnlineUsers } from './presence.js';
 
+const loadingView = document.getElementById('loading-view');
 const loginView = document.getElementById('login-view');
 const appView = document.getElementById('app-view');
 const loginForm = document.getElementById('login-form');
@@ -43,13 +45,22 @@ const chatBackgroundVideo = document.getElementById('chat-background-video');
 const chatBackgroundFade = document.getElementById('chat-background-fade');
 const messageListEl = document.getElementById('message-list');
 
+const imagePreview = document.getElementById('image-preview');
+const imagePreviewImg = document.getElementById('image-preview-img');
+const imagePreviewName = document.getElementById('image-preview-name');
+const imagePreviewCancel = document.getElementById('image-preview-cancel');
+const imageLightbox = document.getElementById('image-lightbox');
+const imageLightboxImg = document.getElementById('image-lightbox-img');
+
 const replyPreview = document.getElementById('reply-preview');
 const replyPreviewText = document.getElementById('reply-preview-text');
 const replyCancelBtn = document.getElementById('reply-cancel-btn');
+const typingIndicatorEl = document.getElementById('typing-indicator');
 
 const composer = document.getElementById('composer');
 const textInput = document.getElementById('text-input');
 const imageInput = document.getElementById('image-input');
+const sendBtn = document.getElementById('send-btn');
 
 const ORIGINAL_TITLE = document.title;
 
@@ -108,10 +119,35 @@ textInput.addEventListener('keydown', (e) => {
   }
 });
 
+let lastTypingSentAt = 0;
+
 textInput.addEventListener('input', () => {
   textInput.style.height = 'auto';
   textInput.style.height = Math.min(textInput.scrollHeight, 120) + 'px';
+
+  const now = Date.now();
+  if (currentChannel && now - lastTypingSentAt > 1500) {
+    lastTypingSentAt = now;
+    broadcastTyping(currentChannel, currentUser.id);
+  }
 });
+
+let typingTimeout = null;
+
+function showTypingIndicator() {
+  const name = currentIsOwner ? (friendDisplayNames.get(currentThreadFriendId) ?? '對方') : OWNER_DISPLAY_NAME;
+  typingIndicatorEl.textContent = `${name} 正在輸入…`;
+  typingIndicatorEl.classList.remove('hidden');
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => {
+    typingIndicatorEl.classList.add('hidden');
+  }, 3000);
+}
+
+function hideTypingIndicator() {
+  clearTimeout(typingTimeout);
+  typingIndicatorEl.classList.add('hidden');
+}
 
 replyCancelBtn.addEventListener('click', () => {
   clearReply();
@@ -129,18 +165,66 @@ function clearReply() {
   replyPreview.classList.add('hidden');
 }
 
+let imagePreviewUrl = null;
+
+imageInput.addEventListener('change', () => {
+  const file = imageInput.files[0];
+  if (imagePreviewUrl) URL.revokeObjectURL(imagePreviewUrl);
+
+  if (!file) {
+    imagePreview.classList.add('hidden');
+    return;
+  }
+
+  imagePreviewUrl = URL.createObjectURL(file);
+  imagePreviewImg.src = imagePreviewUrl;
+  imagePreviewName.textContent = file.name;
+  imagePreview.classList.remove('hidden');
+});
+
+function clearImagePreview() {
+  imageInput.value = '';
+  if (imagePreviewUrl) {
+    URL.revokeObjectURL(imagePreviewUrl);
+    imagePreviewUrl = null;
+  }
+  imagePreview.classList.add('hidden');
+}
+
+imagePreviewCancel.addEventListener('click', () => {
+  clearImagePreview();
+});
+
+messageListEl.addEventListener('click', (e) => {
+  if (e.target.tagName === 'IMG' && e.target.closest('.bubble')) {
+    imageLightboxImg.src = e.target.src;
+    imageLightbox.classList.remove('hidden');
+  }
+});
+
+imageLightbox.addEventListener('click', () => {
+  imageLightbox.classList.add('hidden');
+  imageLightboxImg.src = '';
+});
+
+let isSending = false;
+
 composer.addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!currentThreadFriendId) return;
+  if (!currentThreadFriendId || isSending) return;
 
   const text = textInput.value.trim();
   const file = imageInput.files[0];
   const replyTo = replyingTo?.id ?? null;
+  if (!text && !file) return;
+
+  isSending = true;
+  sendBtn.disabled = true;
 
   try {
     if (file) {
       await sendImageMessage(currentThreadFriendId, currentUser.id, file, replyTo);
-      imageInput.value = '';
+      clearImagePreview();
     }
     if (text) {
       await sendTextMessage(currentThreadFriendId, currentUser.id, text, replyTo);
@@ -150,6 +234,9 @@ composer.addEventListener('submit', async (e) => {
     clearReply();
   } catch (err) {
     alert('傳送失敗：' + err.message);
+  } finally {
+    isSending = false;
+    sendBtn.disabled = false;
   }
 });
 
@@ -172,14 +259,29 @@ function stopTitleFlash() {
   document.title = ORIGINAL_TITLE;
 }
 
+function isPageActive() {
+  return !document.hidden && document.hasFocus();
+}
+
+function markCurrentThreadReadIfActive() {
+  if (currentThreadFriendId && isPageActive()) {
+    markThreadRead(currentThreadFriendId, currentUser.id).catch(() => {});
+  }
+}
+
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) stopTitleFlash();
+  if (!document.hidden) {
+    stopTitleFlash();
+    markCurrentThreadReadIfActive();
+  }
 });
 
-function notify(body) {
+window.addEventListener('focus', markCurrentThreadReadIfActive);
+
+function notify(title, body) {
   if (document.hidden) startTitleFlash();
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    new Notification('chatweb', { body });
+    new Notification(title, { body });
   }
 }
 
@@ -278,6 +380,7 @@ document.addEventListener('mouseup', () => {
 
 async function initApp(user) {
   currentUser = user;
+  loadingView.classList.add('hidden');
   loginView.classList.add('hidden');
   appView.classList.remove('hidden');
 
@@ -320,7 +423,7 @@ async function handleOwnerInboxInsert(row) {
   if (row.sender_id === currentUser.id) return;
   if (row.friend_id === currentThreadFriendId) return; // already handled by the open thread's own subscription
 
-  notify(`${friendDisplayNames.get(row.friend_id) ?? '朋友'}：${quoteSnippet(row)}`);
+  notify(friendDisplayNames.get(row.friend_id) ?? '朋友', quoteSnippet(row));
 
   const friend = allFriends.find((f) => f.id === row.friend_id);
   if (friend) friend.unread = (friend.unread || 0) + 1;
@@ -430,6 +533,8 @@ async function openThread(friendId, backgroundImage) {
 
   currentThreadFriendId = friendId;
   clearReply();
+  clearImagePreview();
+  hideTypingIndicator();
   chatPlaceholder.classList.add('hidden');
   chatBody.classList.remove('hidden');
   composer.classList.remove('hidden');
@@ -465,7 +570,9 @@ async function openThread(friendId, backgroundImage) {
   scrollToBottom();
   updateReadReceipt();
 
-  markThreadRead(friendId, currentUser.id).catch(() => {});
+  if (isPageActive()) {
+    markThreadRead(friendId, currentUser.id).catch(() => {});
+  }
 
   currentChannel = subscribeToThread(friendId, {
     onInsert: async (row) => {
@@ -478,8 +585,11 @@ async function openThread(friendId, backgroundImage) {
       scrollToBottom();
 
       if (row.sender_id !== currentUser.id) {
-        notify(quoteSnippet(row));
-        markThreadRead(friendId, currentUser.id).catch(() => {});
+        const senderName = currentIsOwner ? (friendDisplayNames.get(friendId) ?? '朋友') : OWNER_DISPLAY_NAME;
+        notify(senderName, quoteSnippet(row));
+        if (isPageActive()) {
+          markThreadRead(friendId, currentUser.id).catch(() => {});
+        }
       }
     },
     onDelete: (row) => {
@@ -491,6 +601,10 @@ async function openThread(friendId, backgroundImage) {
       if (state.reader_id !== peerId) return;
       peerLastReadAt = state.last_read_at;
       updateReadReceipt();
+    },
+    onTyping: (senderId) => {
+      if (senderId === currentUser.id) return;
+      showTypingIndicator();
     },
   });
 }
@@ -537,8 +651,12 @@ new ResizeObserver(() => {
   );
 }).observe(appView);
 
-// 進站時如果已經有登入 session 就直接進 app，不用重新輸入密碼
+// 進站時如果已經有登入 session 就直接進 app，不用重新輸入密碼；
+// 確認前先顯示 loading 畫面，避免閃過一下登入頁再跳轉
 const { data: { session } } = await supabase.auth.getSession();
 if (session) {
   await initApp(session.user);
+} else {
+  loadingView.classList.add('hidden');
+  loginView.classList.remove('hidden');
 }
