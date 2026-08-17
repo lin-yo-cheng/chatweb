@@ -423,7 +423,7 @@ async function handleOwnerInboxInsert(row) {
   if (row.sender_id === currentUser.id) return;
   if (row.friend_id === currentThreadFriendId) return; // already handled by the open thread's own subscription
 
-  notify(friendDisplayNames.get(row.friend_id) ?? '朋友', quoteSnippet(row));
+  notify(friendDisplayNames.get(row.friend_id) ?? '朋友', '傳來一則新訊息');
 
   const friend = allFriends.find((f) => f.id === row.friend_id);
   if (friend) friend.unread = (friend.unread || 0) + 1;
@@ -586,7 +586,7 @@ async function openThread(friendId, backgroundImage) {
 
       if (row.sender_id !== currentUser.id) {
         const senderName = currentIsOwner ? (friendDisplayNames.get(friendId) ?? '朋友') : OWNER_DISPLAY_NAME;
-        notify(senderName, quoteSnippet(row));
+        notify(senderName, '傳來一則新訊息');
         if (isPageActive()) {
           markThreadRead(friendId, currentUser.id).catch(() => {});
         }
