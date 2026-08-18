@@ -42,10 +42,6 @@
   <div id="app-view" class="hidden">
     <header>
       <h1>chatweb</h1>
-      <div id="peer-status" class="hidden">
-        <span id="peer-status-dot" class="status-dot"></span>
-        <span id="peer-status-text"></span>
-      </div>
       <button id="logout-btn">登出</button>
     </header>
     <div id="main-area">
@@ -56,6 +52,12 @@
         </div>
         <div id="filter-panel" class="hidden"></div>
         <div id="friend-items"></div>
+      </div>
+      <div id="owner-info-panel" class="hidden">
+        <div class="friend-item">
+          <span id="owner-info-dot" class="status-dot"></span>
+          <span class="friend-name" id="owner-info-name"></span>
+        </div>
       </div>
       <div id="panel-divider" class="hidden"></div>
       <div id="chat-panel">

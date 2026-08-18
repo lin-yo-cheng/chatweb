@@ -85,6 +85,14 @@ export async function getUnreadCount(friendId, sinceIso, excludeSenderId) {
   return count ?? 0;
 }
 
+export async function editMessage(row, newContent) {
+  const { error } = await supabase
+    .from('messages')
+    .update({ content: newContent, edited_at: new Date().toISOString() })
+    .eq('id', row.id);
+  if (error) throw error;
+}
+
 export async function deleteMessage(row) {
   if (row.image_path) {
     await supabase.storage.from(BUCKET).remove([row.image_path]);
@@ -93,7 +101,7 @@ export async function deleteMessage(row) {
   if (error) throw error;
 }
 
-export function subscribeToThread(friendId, { onInsert, onDelete, onReadStateChange, onTyping }) {
+export function subscribeToThread(friendId, { onInsert, onDelete, onUpdate, onReadStateChange, onTyping }) {
   const channel = supabase
     .channel(`messages-${friendId}`)
     .on(
@@ -105,6 +113,16 @@ export function subscribeToThread(friendId, { onInsert, onDelete, onReadStateCha
         filter: `friend_id=eq.${friendId}`,
       },
       (payload) => onInsert(payload.new)
+    )
+    .on(
+      'postgres_changes',
+      {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'messages',
+        filter: `friend_id=eq.${friendId}`,
+      },
+      (payload) => onUpdate?.(payload.new)
     )
     .on(
       'postgres_changes',
@@ -161,6 +179,67 @@ export function quoteSnippet(row) {
   return '';
 }
 
+function formatMessageTime(row) {
+  const base = new Date(row.created_at).toLocaleString('zh-TW', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  return row.edited_at ? `${base}（已編輯）` : base;
+}
+
+function autoGrowTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function startEditing(textEl, timeEl, row) {
+  const original = row.content;
+  const textarea = document.createElement('textarea');
+  textarea.className = 'edit-textarea';
+  textarea.value = original;
+  textEl.replaceWith(textarea);
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  autoGrowTextarea(textarea);
+  textarea.addEventListener('input', () => autoGrowTextarea(textarea));
+
+  let done = false;
+
+  async function finish(save) {
+    if (done) return;
+    done = true;
+
+    const newValue = textarea.value.trim();
+    if (save && newValue && newValue !== original) {
+      try {
+        await editMessage(row, newValue);
+        row.content = newValue;
+        row.edited_at = new Date().toISOString();
+        timeEl.textContent = formatMessageTime(row);
+      } catch (err) {
+        alert('編輯失敗：' + err.message);
+      }
+    }
+
+    const restored = document.createElement('div');
+    restored.className = 'msg-text';
+    restored.textContent = row.content;
+    textarea.replaceWith(restored);
+  }
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      finish(true);
+    } else if (e.key === 'Escape') {
+      finish(false);
+    }
+  });
+  textarea.addEventListener('blur', () => finish(true));
+}
+
 export async function renderMessageNode(row, currentUserId, isOwner, { repliedRow, onReply } = {}) {
   const rowEl = document.createElement('div');
   rowEl.className = 'msg-row' + (row.sender_id === currentUserId ? ' mine' : '');
@@ -180,11 +259,12 @@ export async function renderMessageNode(row, currentUserId, isOwner, { repliedRo
     bubble.appendChild(quote);
   }
 
+  let textEl = null;
   if (row.content) {
-    const p = document.createElement('div');
-    p.className = 'msg-text';
-    p.textContent = row.content;
-    bubble.appendChild(p);
+    textEl = document.createElement('div');
+    textEl.className = 'msg-text';
+    textEl.textContent = row.content;
+    bubble.appendChild(textEl);
   }
 
   if (row.image_path) {
@@ -201,12 +281,7 @@ export async function renderMessageNode(row, currentUserId, isOwner, { repliedRo
   }
 
   const time = document.createElement('time');
-  time.textContent = new Date(row.created_at).toLocaleString('zh-TW', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  time.textContent = formatMessageTime(row);
   bubble.appendChild(time);
 
   const toolbar = document.createElement('div');
@@ -219,6 +294,16 @@ export async function renderMessageNode(row, currentUserId, isOwner, { repliedRo
   replyBtn.textContent = '↩';
   replyBtn.addEventListener('click', () => onReply?.(row));
   toolbar.appendChild(replyBtn);
+
+  if (textEl && row.sender_id === currentUserId) {
+    const editBtn = document.createElement('button');
+    editBtn.className = 'edit-btn';
+    editBtn.type = 'button';
+    editBtn.title = '編輯';
+    editBtn.textContent = '✎';
+    editBtn.addEventListener('click', () => startEditing(textEl, time, row));
+    toolbar.appendChild(editBtn);
+  }
 
   if (row.sender_id === currentUserId || isOwner) {
     const delBtn = document.createElement('button');

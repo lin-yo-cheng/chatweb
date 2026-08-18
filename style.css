@@ -248,12 +248,19 @@ header h1 {
   color: #e5e7eb;
 }
 
-#peer-status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #9ca3af;
+#owner-info-panel {
+  width: 160px;
+  flex-shrink: 0;
+  border-right: 1px solid #374151;
+  background: #1f2937;
+}
+
+#owner-info-panel .friend-item {
+  cursor: default;
+}
+
+#owner-info-panel .friend-item:hover {
+  background: transparent;
 }
 
 .status-dot {
@@ -551,6 +558,26 @@ header h1 {
   background: #6366f1;
 }
 
+.edit-btn {
+  background: #d97706;
+  font-size: 11px;
+}
+
+.edit-textarea {
+  display: block;
+  width: 100%;
+  min-width: 160px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.15);
+  color: inherit;
+  font: inherit;
+  resize: none;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
 .msg-row.mine .bubble {
   background: #3b82f6;
   color: #fff;
@@ -754,6 +781,10 @@ header h1 {
   }
 
   #panel-divider {
+    display: none !important;
+  }
+
+  #owner-info-panel {
     display: none !important;
   }
 

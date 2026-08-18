@@ -25,9 +25,9 @@ const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 
-const peerStatusEl = document.getElementById('peer-status');
-const peerStatusDot = document.getElementById('peer-status-dot');
-const peerStatusText = document.getElementById('peer-status-text');
+const ownerInfoPanel = document.getElementById('owner-info-panel');
+const ownerInfoDot = document.getElementById('owner-info-dot');
+const ownerInfoName = document.getElementById('owner-info-name');
 
 const mainAreaEl = document.getElementById('main-area');
 const friendListEl = document.getElementById('friend-list');
@@ -113,7 +113,8 @@ logoutBtn.addEventListener('click', async () => {
 // ---------- Composer: reply + send + Enter-to-send ----------
 
 textInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+  // 手機沒有 Shift 鍵可以配合換行，Enter 一律當作換行，送出訊息一定要按送出鈕
+  if (e.key === 'Enter' && !e.shiftKey && !isMobile()) {
     e.preventDefault();
     composer.requestSubmit();
   }
@@ -166,6 +167,26 @@ function clearReply() {
 }
 
 let imagePreviewUrl = null;
+
+function setSelectedImageFile(file) {
+  const dataTransfer = new DataTransfer();
+  dataTransfer.items.add(file);
+  imageInput.files = dataTransfer.files;
+  imageInput.dispatchEvent(new Event('change'));
+}
+
+textInput.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) setSelectedImageFile(file);
+      break;
+    }
+  }
+});
 
 imageInput.addEventListener('change', () => {
   const file = imageInput.files[0];
@@ -294,7 +315,7 @@ function updateOnlineUI() {
       if (dot) dot.classList.toggle('online', onlineIds.has(item.dataset.friendId));
     });
   } else {
-    peerStatusDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
+    ownerInfoDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
   }
 }
 
@@ -397,7 +418,7 @@ async function initApp(user) {
   });
 
   if (currentIsOwner) {
-    peerStatusEl.classList.add('hidden');
+    ownerInfoPanel.classList.add('hidden');
     friendListEl.classList.remove('hidden');
     panelDivider.classList.remove('hidden');
     const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -408,8 +429,8 @@ async function initApp(user) {
   } else {
     friendListEl.classList.add('hidden');
     setSidebarCollapsed(true, false);
-    peerStatusEl.classList.remove('hidden');
-    peerStatusText.textContent = OWNER_DISPLAY_NAME;
+    ownerInfoPanel.classList.remove('hidden');
+    ownerInfoName.textContent = OWNER_DISPLAY_NAME;
     const { data: myRow } = await supabase
       .from('friends')
       .select('*')
@@ -590,6 +611,17 @@ async function openThread(friendId, backgroundImage) {
         if (isPageActive()) {
           markThreadRead(friendId, currentUser.id).catch(() => {});
         }
+      }
+    },
+    onUpdate: async (row) => {
+      messageMap.set(row.id, row);
+      const oldNode = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
+      if (oldNode) {
+        const newNode = await renderMessageNode(row, currentUser.id, currentIsOwner, {
+          repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
+          onReply: setReply,
+        });
+        oldNode.replaceWith(newNode);
       }
     },
     onDelete: (row) => {

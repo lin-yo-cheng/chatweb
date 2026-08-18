@@ -56,6 +56,9 @@ create index if not exists messages_friend_id_created_at_idx
 alter table public.messages
   add column if not exists reply_to uuid references public.messages(id) on delete set null;
 
+alter table public.messages
+  add column if not exists edited_at timestamptz;
+
 alter table public.messages enable row level security;
 
 -- 朋友只能看自己那條對話串；owner 能看所有對話串
@@ -76,6 +79,12 @@ create policy "insert into own thread or owner insert anywhere"
       or (auth.uid() = '1daffde3-7672-43ff-b34e-7552586b1f16')
     )
   );
+
+-- 只有原發送者能編輯自己的訊息內容，owner 也不能改朋友說的話
+create policy "sender can edit own message"
+  on public.messages for update
+  using (sender_id = auth.uid())
+  with check (sender_id = auth.uid());
 
 -- 自己傳的訊息可以刪；owner 能刪任一則訊息
 create policy "delete own message or owner deletes any"
