@@ -301,7 +301,10 @@ export async function renderMessageNode(row, currentUserId, isOwner, { repliedRo
     editBtn.type = 'button';
     editBtn.title = '編輯';
     editBtn.textContent = '✎';
-    editBtn.addEventListener('click', () => startEditing(textEl, time, row));
+    editBtn.addEventListener('click', () => {
+      const currentTextEl = bubble.querySelector('.msg-text');
+      if (currentTextEl) startEditing(currentTextEl, time, row);
+    });
     toolbar.appendChild(editBtn);
   }
 
