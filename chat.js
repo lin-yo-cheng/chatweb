@@ -179,6 +179,34 @@ export function quoteSnippet(row) {
   return '';
 }
 
+const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+
+function appendTextWithLinks(container, text) {
+  let lastIndex = 0;
+  let match;
+  URL_REGEX.lastIndex = 0;
+
+  while ((match = URL_REGEX.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+    }
+
+    const a = document.createElement('a');
+    a.href = match[0];
+    a.textContent = match[0];
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.className = 'msg-link';
+    container.appendChild(a);
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+}
+
 function formatMessageTime(row) {
   const base = new Date(row.created_at).toLocaleString('zh-TW', {
     month: 'numeric',
@@ -225,7 +253,7 @@ function startEditing(textEl, timeEl, row) {
 
     const restored = document.createElement('div');
     restored.className = 'msg-text';
-    restored.textContent = row.content;
+    appendTextWithLinks(restored, row.content);
     textarea.replaceWith(restored);
   }
 
@@ -263,7 +291,7 @@ export async function renderMessageNode(row, currentUserId, isOwner, { repliedRo
   if (row.content) {
     textEl = document.createElement('div');
     textEl.className = 'msg-text';
-    textEl.textContent = row.content;
+    appendTextWithLinks(textEl, row.content);
     bubble.appendChild(textEl);
   }
 

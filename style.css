@@ -248,6 +248,14 @@ header h1 {
   color: #e5e7eb;
 }
 
+#header-peer-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
 #owner-info-panel {
   width: 160px;
   flex-shrink: 0;
@@ -522,6 +530,11 @@ header h1 {
 
 .bubble > .msg-text {
   white-space: pre-wrap;
+}
+
+.msg-link {
+  color: #93c5fd;
+  text-decoration: underline;
 }
 
 .msg-toolbar {

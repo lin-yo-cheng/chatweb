@@ -25,6 +25,10 @@ const loginError = document.getElementById('login-error');
 const loginBtn = document.getElementById('login-btn');
 const logoutBtn = document.getElementById('logout-btn');
 
+const headerPeerInfo = document.getElementById('header-peer-info');
+const headerPeerDot = document.getElementById('header-peer-dot');
+const headerPeerName = document.getElementById('header-peer-name');
+
 const ownerInfoPanel = document.getElementById('owner-info-panel');
 const ownerInfoDot = document.getElementById('owner-info-dot');
 const ownerInfoName = document.getElementById('owner-info-name');
@@ -82,6 +86,12 @@ function isMobile() {
   return window.matchMedia('(max-width: 640px)').matches;
 }
 
+// 觸控裝置（沒有實體鍵盤/Shift 鍵）判斷，跟視窗寬度無關——
+// 電腦把視窗縮小依然是滑鼠鍵盤操作，Enter 應該正常送出
+function isTouchDevice() {
+  return window.matchMedia('(pointer: coarse)').matches;
+}
+
 // ---------- Login / logout ----------
 
 loginForm.addEventListener('submit', async (e) => {
@@ -113,8 +123,9 @@ logoutBtn.addEventListener('click', async () => {
 // ---------- Composer: reply + send + Enter-to-send ----------
 
 textInput.addEventListener('keydown', (e) => {
-  // 手機沒有 Shift 鍵可以配合換行，Enter 一律當作換行，送出訊息一定要按送出鈕
-  if (e.key === 'Enter' && !e.shiftKey && !isMobile()) {
+  // 觸控裝置沒有 Shift 鍵可以配合換行，Enter 一律當作換行，送出訊息一定要按送出鈕；
+  // 電腦不管視窗多窄都還是鍵盤滑鼠操作，Enter 照常送出
+  if (e.key === 'Enter' && !e.shiftKey && !isTouchDevice()) {
     e.preventDefault();
     composer.requestSubmit();
   }
@@ -316,6 +327,7 @@ function updateOnlineUI() {
     });
   } else {
     ownerInfoDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
+    headerPeerDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
   }
 }
 
@@ -419,6 +431,7 @@ async function initApp(user) {
 
   if (currentIsOwner) {
     ownerInfoPanel.classList.add('hidden');
+    headerPeerInfo.classList.add('hidden');
     friendListEl.classList.remove('hidden');
     panelDivider.classList.remove('hidden');
     const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
@@ -431,6 +444,8 @@ async function initApp(user) {
     setSidebarCollapsed(true, false);
     ownerInfoPanel.classList.remove('hidden');
     ownerInfoName.textContent = OWNER_DISPLAY_NAME;
+    headerPeerInfo.classList.remove('hidden');
+    headerPeerName.textContent = OWNER_DISPLAY_NAME;
     const { data: myRow } = await supabase
       .from('friends')
       .select('*')
