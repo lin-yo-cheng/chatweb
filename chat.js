@@ -168,8 +168,8 @@ export function subscribeToOwnerInbox(onInsert) {
   return channel;
 }
 
-export function unsubscribeFromThread(channel) {
-  if (channel) supabase.removeChannel(channel);
+export async function unsubscribeFromThread(channel) {
+  if (channel) await supabase.removeChannel(channel);
 }
 
 export function quoteSnippet(row) {

@@ -325,6 +325,9 @@ function updateOnlineUI() {
       const dot = item.querySelector('.status-dot');
       if (dot) dot.classList.toggle('online', onlineIds.has(item.dataset.friendId));
     });
+    if (currentThreadFriendId) {
+      headerPeerDot.classList.toggle('online', onlineIds.has(currentThreadFriendId));
+    }
   } else {
     ownerInfoDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
     headerPeerDot.classList.toggle('online', onlineIds.has(OWNER_UUID));
@@ -561,11 +564,16 @@ function applyBackground(path) {
 
 // ---------- Thread ----------
 
+let threadToken = 0;
+
 async function openThread(friendId, backgroundImage) {
+  const myToken = ++threadToken;
+
   if (currentChannel) {
-    unsubscribeFromThread(currentChannel);
+    await unsubscribeFromThread(currentChannel);
     currentChannel = null;
   }
+  if (myToken !== threadToken) return; // 切換到別的對話串了，這次呼叫作廢
 
   currentThreadFriendId = friendId;
   clearReply();
@@ -579,8 +587,15 @@ async function openThread(friendId, backgroundImage) {
 
   applyBackground(backgroundImage);
 
+  if (currentIsOwner) {
+    headerPeerInfo.classList.remove('hidden');
+    headerPeerName.textContent = friendDisplayNames.get(friendId) ?? '';
+    headerPeerDot.classList.toggle('online', onlineIds.has(friendId));
+  }
+
   const peerId = currentIsOwner ? friendId : OWNER_UUID;
   const [rows, readStates] = await Promise.all([loadMessages(friendId), getReadStates(friendId)]);
+  if (myToken !== threadToken) return; // 切換到別的對話串了，這次呼叫作廢
 
   const myOldLastRead = readStates.find((s) => s.reader_id === currentUser.id)?.last_read_at ?? null;
   peerLastReadAt = readStates.find((s) => s.reader_id === peerId)?.last_read_at ?? null;
@@ -601,6 +616,7 @@ async function openThread(friendId, backgroundImage) {
       repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
       onReply: setReply,
     });
+    if (myToken !== threadToken) return; // 切換到別的對話串了，這次呼叫作廢
     messageListEl.appendChild(node);
   }
   scrollToBottom();
@@ -612,11 +628,13 @@ async function openThread(friendId, backgroundImage) {
 
   currentChannel = subscribeToThread(friendId, {
     onInsert: async (row) => {
+      if (myToken !== threadToken) return;
       messageMap.set(row.id, row);
       const node = await renderMessageNode(row, currentUser.id, currentIsOwner, {
         repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
         onReply: setReply,
       });
+      if (myToken !== threadToken) return;
       messageListEl.appendChild(node);
       scrollToBottom();
 
@@ -629,6 +647,7 @@ async function openThread(friendId, backgroundImage) {
       }
     },
     onUpdate: async (row) => {
+      if (myToken !== threadToken) return;
       messageMap.set(row.id, row);
       const oldNode = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
       if (oldNode) {
@@ -636,20 +655,24 @@ async function openThread(friendId, backgroundImage) {
           repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
           onReply: setReply,
         });
+        if (myToken !== threadToken) return;
         oldNode.replaceWith(newNode);
       }
     },
     onDelete: (row) => {
+      if (myToken !== threadToken) return;
       messageMap.delete(row.id);
       const node = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
       if (node) node.remove();
     },
     onReadStateChange: (state) => {
+      if (myToken !== threadToken) return;
       if (state.reader_id !== peerId) return;
       peerLastReadAt = state.last_read_at;
       updateReadReceipt();
     },
     onTyping: (senderId) => {
+      if (myToken !== threadToken) return;
       if (senderId === currentUser.id) return;
       showTypingIndicator();
     },
@@ -680,6 +703,13 @@ function scrollToBottom() {
 const SIZE_KEY = 'chatweb-panel-size';
 
 (() => {
+  // 手機版一律滿版鋪開，不套用「記住大小」這個桌面版才有意義的機制，
+  // 也順便清掉任何殘留的 inline 尺寸，避免卡在轉橫向/直向時記錄到的錯誤尺寸
+  if (isMobile()) {
+    appView.style.width = '';
+    appView.style.height = '';
+    return;
+  }
   try {
     const saved = JSON.parse(localStorage.getItem(SIZE_KEY));
     if (saved?.width && saved?.height) {
@@ -692,6 +722,7 @@ const SIZE_KEY = 'chatweb-panel-size';
 })();
 
 new ResizeObserver(() => {
+  if (isMobile()) return;
   localStorage.setItem(
     SIZE_KEY,
     JSON.stringify({ width: appView.offsetWidth, height: appView.offsetHeight })
