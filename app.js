@@ -2,6 +2,9 @@ import { supabase } from './supabaseClient.js';
 import { OWNER_UUID, OWNER_DISPLAY_NAME } from './config.js';
 import {
   loadMessages,
+  loadMessagesSince,
+  loadLatestMessageMeta,
+  loadInboxSince,
   sendTextMessage,
   sendImageMessage,
   subscribeToThread,
@@ -16,6 +19,7 @@ import {
   quoteSnippet,
 } from './chat.js';
 import { trackPresence, subscribeOnlineUsers } from './presence.js';
+import { logConn } from './connlog.js';
 
 const loadingView = document.getElementById('loading-view');
 const loginView = document.getElementById('login-view');
@@ -64,7 +68,6 @@ const typingIndicatorEl = document.getElementById('typing-indicator');
 const composer = document.getElementById('composer');
 const textInput = document.getElementById('text-input');
 const imageInput = document.getElementById('image-input');
-const sendBtn = document.getElementById('send-btn');
 
 const ORIGINAL_TITLE = document.title;
 
@@ -239,38 +242,62 @@ imageLightbox.addEventListener('click', () => {
   imageLightboxImg.src = '';
 });
 
-let isSending = false;
+// 送出時「當下」就取出內容並清空輸入框：
+// - 連按 Enter 時第二次輸入框已經是空的，不會重複送出
+// - 網路慢的時候可以繼續打下一則，不會被鎖住或在送出完成時被一起清掉
+// 實際傳送排進佇列，依序執行（避免兩則訊息在網路上互相超車、順序錯亂），
+// 傳送失敗才把內容放回輸入框。
+let sendQueue = Promise.resolve();
 
-composer.addEventListener('submit', async (e) => {
+composer.addEventListener('submit', (e) => {
   e.preventDefault();
-  if (!currentThreadFriendId || isSending) return;
+  if (!currentThreadFriendId) return;
 
   const text = textInput.value.trim();
   const file = imageInput.files[0];
-  const replyTo = replyingTo?.id ?? null;
+  const reply = replyingTo;
   if (!text && !file) return;
 
-  isSending = true;
-  sendBtn.disabled = true;
+  // 送出當下就固定好對象，之後就算切換聊天室也不會送錯人
+  const friendId = currentThreadFriendId;
+  const senderId = currentUser.id;
 
-  try {
-    if (file) {
-      await sendImageMessage(currentThreadFriendId, currentUser.id, file, replyTo);
-      clearImagePreview();
+  textInput.value = '';
+  textInput.style.height = 'auto';
+  if (file) clearImagePreview();
+  clearReply();
+
+  sendQueue = sendQueue.then(async () => {
+    let failedStep = null;
+    try {
+      if (file) {
+        failedStep = 'image';
+        await sendImageMessage(friendId, senderId, file, reply?.id ?? null);
+      }
+      if (text) {
+        failedStep = 'text';
+        await sendTextMessage(friendId, senderId, text, reply?.id ?? null);
+      }
+    } catch (err) {
+      alert('傳送失敗：' + err.message);
+      restoreUnsent(failedStep === 'image' ? { text, file, reply } : { text, reply });
     }
-    if (text) {
-      await sendTextMessage(currentThreadFriendId, currentUser.id, text, replyTo);
-      textInput.value = '';
-      textInput.style.height = 'auto';
-    }
-    clearReply();
-  } catch (err) {
-    alert('傳送失敗：' + err.message);
-  } finally {
-    isSending = false;
-    sendBtn.disabled = false;
-  }
+  });
 });
+
+// 傳送失敗時把沒送出去的內容放回輸入框（輸入框已經有新內容的話，接在前面不蓋掉）
+function restoreUnsent({ text, file, reply }) {
+  if (text) {
+    textInput.value = textInput.value ? `${text}\n${textInput.value}` : text;
+    textInput.dispatchEvent(new Event('input'));
+  }
+  if (file && !imageInput.files[0]) setSelectedImageFile(file);
+  if (reply && !replyingTo) {
+    replyingTo = reply;
+    replyPreviewText.textContent = reply.snippet;
+    replyPreview.classList.remove('hidden');
+  }
+}
 
 // ---------- Notifications ----------
 
@@ -302,19 +329,38 @@ function markCurrentThreadReadIfActive() {
 }
 
 document.addEventListener('visibilitychange', () => {
+  logConn('visibility', document.hidden ? 'hidden' : 'visible');
   if (!document.hidden) {
     stopTitleFlash();
     markCurrentThreadReadIfActive();
+    syncThread('visible', true);
+    checkInbox('visible');
   }
 });
 
-window.addEventListener('focus', markCurrentThreadReadIfActive);
+window.addEventListener('focus', () => {
+  markCurrentThreadReadIfActive();
+  syncThread('focus', true);
+});
+
+window.addEventListener('online', () => {
+  logConn('network', 'online');
+  syncThread('online', true);
+  checkInbox('online');
+});
+
+window.addEventListener('offline', () => logConn('network', 'offline'));
 
 function notify(title, body) {
   if (document.hidden) startTitleFlash();
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     new Notification(title, { body });
   }
+}
+
+// 補抓到漏掉的訊息時，一個對話只跳一則摘要通知，不會一次跳好幾則
+function summaryBody(count) {
+  return count === 1 ? '傳來一則新訊息' : `傳來 ${count} 則新訊息`;
 }
 
 // ---------- Online presence ----------
@@ -440,8 +486,15 @@ async function initApp(user) {
     const savedWidth = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     if (savedWidth) friendListEl.style.width = savedWidth;
     setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true', false);
+    // 先記下目前最新一則訊息的時間點，之後的「定期檢查」只看這個時間點之後的新訊息
+    const latest = await loadLatestMessageMeta().catch(() => null);
+    inboxCursor = latest?.created_at ?? null;
+    if (latest) rememberInboxId(latest.id); // 邊界那一則登入前就存在，不算新訊息
     await renderFriendList();
-    ownerInboxChannel = subscribeToOwnerInbox(handleOwnerInboxInsert);
+    ownerInboxChannel = subscribeToOwnerInbox(handleOwnerInboxInsert, (status) => {
+      logConn('inbox-channel', status);
+      if (status === 'SUBSCRIBED') checkInbox('subscribed');
+    });
   } else {
     friendListEl.classList.add('hidden');
     setSidebarCollapsed(true, false);
@@ -456,9 +509,28 @@ async function initApp(user) {
       .single();
     await openThread(user.id, myRow?.background_image);
   }
+
+  startPolling();
+}
+
+// ---------- Owner inbox（其他對話串的新訊息：未讀數字 + 通知）----------
+
+let inboxCursor = null; // 上次檢查時看到的最新訊息時間（資料庫原始字串）
+let inboxChecking = false;
+const seenInboxIds = new Set(); // 已經處理過的訊息 ID，避免即時推送和定期檢查重複處理
+
+function rememberInboxId(id) {
+  seenInboxIds.add(id);
+  if (seenInboxIds.size > 1000) {
+    const iterator = seenInboxIds.values();
+    for (let i = 0; i < 500; i++) seenInboxIds.delete(iterator.next().value);
+  }
 }
 
 async function handleOwnerInboxInsert(row) {
+  if (seenInboxIds.has(row.id)) return;
+  rememberInboxId(row.id);
+
   if (row.sender_id === currentUser.id) return;
   if (row.friend_id === currentThreadFriendId) return; // already handled by the open thread's own subscription
 
@@ -472,6 +544,56 @@ async function handleOwnerInboxInsert(row) {
     const badge = item.querySelector('.unread-badge');
     badge.textContent = String(friend?.unread ?? 1);
     badge.classList.remove('hidden');
+  }
+}
+
+// 重新向資料庫計算指定朋友的未讀數並更新徽章（用資料庫的數字為準，不用累加）
+async function refreshUnreadFor(friendIds) {
+  const states = await getMyReadStates(OWNER_UUID);
+  const lastReadByFriend = new Map(states.map((s) => [s.friend_id, s.last_read_at]));
+
+  for (const fid of friendIds) {
+    const friend = allFriends.find((f) => f.id === fid);
+    if (!friend) continue;
+
+    friend.unread = await getUnreadCount(fid, lastReadByFriend.get(fid) ?? null, OWNER_UUID);
+    const badge = friendItemsEl.querySelector(`[data-friend-id="${fid}"] .unread-badge`);
+    if (badge) {
+      badge.textContent = String(friend.unread);
+      badge.classList.toggle('hidden', friend.unread <= 0);
+    }
+  }
+}
+
+// 定期檢查／重連／切回前景時呼叫：補抓即時推送漏掉的其他對話串訊息
+async function checkInbox(reason) {
+  if (!currentIsOwner || !currentUser || inboxChecking) return;
+  inboxChecking = true;
+
+  try {
+    const rows = await loadInboxSince(inboxCursor);
+    if (rows.length) inboxCursor = rows[rows.length - 1].created_at;
+
+    const foundByFriend = new Map();
+    for (const row of rows) {
+      if (seenInboxIds.has(row.id)) continue;
+      rememberInboxId(row.id);
+      if (row.sender_id === currentUser.id) continue;
+      if (row.friend_id === currentThreadFriendId) continue; // 目前開著的對話串由 syncThread 處理
+      foundByFriend.set(row.friend_id, (foundByFriend.get(row.friend_id) ?? 0) + 1);
+    }
+
+    if (foundByFriend.size) {
+      logConn('inbox-found', `${reason}: ${[...foundByFriend.values()].reduce((a, b) => a + b, 0)} 則`);
+      await refreshUnreadFor([...foundByFriend.keys()]);
+      for (const [friendId, count] of foundByFriend) {
+        notify(friendDisplayNames.get(friendId) ?? '朋友', summaryBody(count));
+      }
+    }
+  } catch (err) {
+    logConn('inbox-error', err.message);
+  } finally {
+    inboxChecking = false;
   }
 }
 
@@ -565,9 +687,57 @@ function applyBackground(path) {
 // ---------- Thread ----------
 
 let threadToken = 0;
+let threadReady = false; // 目前對話串的歷史訊息是否載入完成（載入中不做補抓，避免重複插入）
+
+function latestKnownCreatedAt() {
+  let latest = null;
+  let latestTime = -Infinity;
+  for (const row of messageMap.values()) {
+    const time = new Date(row.created_at).getTime();
+    if (time > latestTime) {
+      latestTime = time;
+      latest = row.created_at; // 保留資料庫原始字串（含微秒）
+    }
+  }
+  return latest;
+}
+
+// 依訊息時間插入到正確位置（即時推送、補抓的訊息到達順序不一定等於時間順序）
+function insertMessageNode(node, row) {
+  const time = new Date(row.created_at).getTime();
+  const rows = messageListEl.querySelectorAll('.msg-row');
+
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const other = messageMap.get(rows[i].dataset.messageId);
+    if (other && new Date(other.created_at).getTime() <= time) {
+      rows[i].after(node);
+      return;
+    }
+  }
+
+  const first = messageListEl.querySelector('.msg-row');
+  if (first) first.before(node);
+  else messageListEl.appendChild(node);
+}
+
+function buildMessageNode(row) {
+  return renderMessageNode(row, currentUser.id, currentIsOwner, {
+    repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
+    onReply: setReply,
+  });
+}
+
+async function replaceMessageNode(row, token) {
+  const oldNode = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
+  if (!oldNode) return;
+  const newNode = await buildMessageNode(row);
+  if (token !== threadToken) return;
+  oldNode.replaceWith(newNode);
+}
 
 async function openThread(friendId, backgroundImage) {
   const myToken = ++threadToken;
+  threadReady = false;
 
   if (currentChannel) {
     await unsubscribeFromThread(currentChannel);
@@ -594,7 +764,19 @@ async function openThread(friendId, backgroundImage) {
   }
 
   const peerId = currentIsOwner ? friendId : OWNER_UUID;
-  const [rows, readStates] = await Promise.all([loadMessages(friendId), getReadStates(friendId)]);
+
+  let rows;
+  let readStates;
+  try {
+    [rows, readStates] = await Promise.all([loadMessages(friendId), getReadStates(friendId)]);
+  } catch (err) {
+    // 開啟時剛好網路不穩：不要停在一片空白，幾秒後自動重試
+    logConn('thread-load-error', err.message);
+    setTimeout(() => {
+      if (myToken === threadToken) openThread(friendId, backgroundImage);
+    }, 5000);
+    return;
+  }
   if (myToken !== threadToken) return; // 切換到別的對話串了，這次呼叫作廢
 
   const myOldLastRead = readStates.find((s) => s.reader_id === currentUser.id)?.last_read_at ?? null;
@@ -612,10 +794,7 @@ async function openThread(friendId, backgroundImage) {
       dividerPlaced = true;
     }
 
-    const node = await renderMessageNode(row, currentUser.id, currentIsOwner, {
-      repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
-      onReply: setReply,
-    });
+    const node = await buildMessageNode(row);
     if (myToken !== threadToken) return; // 切換到別的對話串了，這次呼叫作廢
     messageListEl.appendChild(node);
   }
@@ -626,17 +805,19 @@ async function openThread(friendId, backgroundImage) {
     markThreadRead(friendId, currentUser.id).catch(() => {});
   }
 
+  threadReady = true;
+
   currentChannel = subscribeToThread(friendId, {
     onInsert: async (row) => {
       if (myToken !== threadToken) return;
+      if (messageMap.has(row.id)) return; // 已經被補抓機制加進來了
       messageMap.set(row.id, row);
-      const node = await renderMessageNode(row, currentUser.id, currentIsOwner, {
-        repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
-        onReply: setReply,
-      });
+      const node = await buildMessageNode(row);
       if (myToken !== threadToken) return;
-      messageListEl.appendChild(node);
+      if (messageListEl.querySelector(`[data-message-id="${row.id}"]`)) return;
+      insertMessageNode(node, row);
       scrollToBottom();
+      updateReadReceipt();
 
       if (row.sender_id !== currentUser.id) {
         const senderName = currentIsOwner ? (friendDisplayNames.get(friendId) ?? '朋友') : OWNER_DISPLAY_NAME;
@@ -649,21 +830,15 @@ async function openThread(friendId, backgroundImage) {
     onUpdate: async (row) => {
       if (myToken !== threadToken) return;
       messageMap.set(row.id, row);
-      const oldNode = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
-      if (oldNode) {
-        const newNode = await renderMessageNode(row, currentUser.id, currentIsOwner, {
-          repliedRow: row.reply_to ? messageMap.get(row.reply_to) : null,
-          onReply: setReply,
-        });
-        if (myToken !== threadToken) return;
-        oldNode.replaceWith(newNode);
-      }
+      await replaceMessageNode(row, myToken);
+      updateReadReceipt(); // 重新繪製的訊息泡泡會丟掉「已讀」字樣，要補回去
     },
     onDelete: (row) => {
       if (myToken !== threadToken) return;
       messageMap.delete(row.id);
       const node = messageListEl.querySelector(`[data-message-id="${row.id}"]`);
       if (node) node.remove();
+      updateReadReceipt();
     },
     onReadStateChange: (state) => {
       if (myToken !== threadToken) return;
@@ -676,22 +851,156 @@ async function openThread(friendId, backgroundImage) {
       if (senderId === currentUser.id) return;
       showTypingIndicator();
     },
+    onStatus: (status) => {
+      if (myToken !== threadToken) return;
+      logConn('thread-channel', status);
+      // 連線建立（包含斷線後重連）就補抓一次：涵蓋「讀完歷史到接上即時連線之間」以及斷線期間漏掉的訊息
+      if (status === 'SUBSCRIBED') syncThread('subscribed', true);
+    },
   });
 }
 
-function updateReadReceipt() {
-  const rows = messageListEl.querySelectorAll('.msg-row.mine');
-  if (!rows.length) return;
-  const lastRow = rows[rows.length - 1];
-  const receipt = lastRow.querySelector('.read-receipt');
-  if (!receipt) return;
+// ---------- 補抓：即時推送漏掉的訊息 ----------
+// 即時推送（WebSocket）斷線期間的訊息不會補發。這裡在「連線建立/重連、切回前景、網路恢復、
+// 定期檢查」時，主動向資料庫確認有沒有漏掉的訊息；light 只抓新訊息，full 會完整比對
+// （包含被刪除、被編輯的訊息）。
 
-  const row = messageMap.get(lastRow.dataset.messageId);
-  if (row && peerLastReadAt && peerLastReadAt >= row.created_at) {
-    receipt.textContent = '已讀';
-  } else {
-    receipt.textContent = '';
+let syncing = false;
+let syncAgain = null; // 同步進行中又被要求時，記下來，做完再補跑一次
+
+async function syncThread(reason, full) {
+  if (!currentUser || !currentThreadFriendId || !threadReady) return;
+
+  if (syncing) {
+    syncAgain = { reason, full: full || syncAgain?.full === true };
+    return;
   }
+  syncing = true;
+
+  const friendId = currentThreadFriendId;
+  const token = threadToken;
+  const peerId = currentIsOwner ? friendId : OWNER_UUID;
+
+  try {
+    // 開始查詢「之前」就已經在畫面上的訊息：只有這些訊息才能判定為「已被刪除」，
+    // 查詢期間剛由即時推送加進來的訊息不會被誤刪
+    const knownBefore = new Set(messageMap.keys());
+    const since = full ? null : latestKnownCreatedAt();
+
+    const [rows, readStates] = await Promise.all([
+      since ? loadMessagesSince(friendId, since) : loadMessages(friendId),
+      getReadStates(friendId),
+    ]);
+    if (token !== threadToken || friendId !== currentThreadFriendId) return;
+
+    let changed = false;
+
+    // 對方的已讀進度只往前推
+    const peerRead = readStates.find((s) => s.reader_id === peerId)?.last_read_at ?? null;
+    if (peerRead && (!peerLastReadAt || new Date(peerRead) > new Date(peerLastReadAt))) {
+      peerLastReadAt = peerRead;
+      changed = true;
+    }
+
+    let addedCount = 0;
+    const addedFromOthers = [];
+
+    for (const row of rows) {
+      const existing = messageMap.get(row.id);
+
+      if (existing) {
+        if (full && (existing.content !== row.content || existing.edited_at !== row.edited_at)) {
+          messageMap.set(row.id, row);
+          await replaceMessageNode(row, token);
+          changed = true;
+        }
+        continue;
+      }
+
+      messageMap.set(row.id, row);
+      const node = await buildMessageNode(row);
+      if (token !== threadToken) return;
+      if (!messageListEl.querySelector(`[data-message-id="${row.id}"]`)) insertMessageNode(node, row);
+      addedCount++;
+      if (row.sender_id !== currentUser.id) addedFromOthers.push(row);
+    }
+
+    let removedCount = 0;
+    if (full) {
+      const serverIds = new Set(rows.map((row) => row.id));
+      for (const id of knownBefore) {
+        if (serverIds.has(id) || !messageMap.has(id)) continue;
+        messageMap.delete(id);
+        messageListEl.querySelector(`[data-message-id="${id}"]`)?.remove();
+        removedCount++;
+      }
+    }
+
+    if (addedCount || removedCount || changed) updateReadReceipt();
+
+    if (addedCount) {
+      scrollToBottom();
+      logConn('sync-found', `${reason}: 補抓到 ${addedCount} 則`);
+
+      if (addedFromOthers.length) {
+        if (isPageActive()) {
+          markThreadRead(friendId, currentUser.id).catch(() => {});
+        } else {
+          const senderName = currentIsOwner ? (friendDisplayNames.get(friendId) ?? '朋友') : OWNER_DISPLAY_NAME;
+          notify(senderName, summaryBody(addedFromOthers.length));
+        }
+      }
+    }
+    if (removedCount) logConn('sync-removed', `${reason}: 移除 ${removedCount} 則`);
+  } catch (err) {
+    logConn('sync-error', `${reason}: ${err.message}`);
+  } finally {
+    syncing = false;
+    if (syncAgain) {
+      const next = syncAgain;
+      syncAgain = null;
+      syncThread(next.reason, next.full);
+    }
+  }
+}
+
+// ---------- 定期檢查 ----------
+// 即時連線因為任何原因無聲壞掉時的保險：每 25 秒只問一次「有沒有新訊息」（資料量很小），
+// 每 5 次（約 2 分鐘）做一次完整比對。
+
+const POLL_INTERVAL_MS = 25000;
+const FULL_SYNC_EVERY = 5;
+let pollTimer = null;
+let pollCount = 0;
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => {
+    if (!navigator.onLine) return;
+    pollCount++;
+    syncThread('poll', pollCount % FULL_SYNC_EVERY === 0);
+    checkInbox('poll');
+  }, POLL_INTERVAL_MS);
+}
+
+// 已讀只顯示在「對方最後看過的那一則我傳的訊息」上，
+// 之後我再傳新訊息，已讀會停留在原本那一則，不會跟著消失
+function updateReadReceipt() {
+  const peerReadTime = peerLastReadAt ? new Date(peerLastReadAt).getTime() : null;
+  let lastReadReceipt = null;
+
+  messageListEl.querySelectorAll('.msg-row.mine').forEach((el) => {
+    const receipt = el.querySelector('.read-receipt');
+    if (!receipt) return;
+    receipt.textContent = '';
+
+    const row = messageMap.get(el.dataset.messageId);
+    if (peerReadTime !== null && row && new Date(row.created_at).getTime() <= peerReadTime) {
+      lastReadReceipt = receipt;
+    }
+  });
+
+  if (lastReadReceipt) lastReadReceipt.textContent = '已讀';
 }
 
 function scrollToBottom() {

@@ -13,6 +13,47 @@ export async function loadMessages(friendId) {
   return data;
 }
 
+// 只抓某個時間點「之後」的新訊息（用 >= 讓邊界那一筆也回來，由呼叫端依訊息 ID 去重，
+// 避免同一毫秒內的兩則訊息被漏掉）。since 要傳資料庫回傳的原始字串，不要轉成 Date，
+// 否則微秒會被截斷。
+export async function loadMessagesSince(friendId, since) {
+  let query = supabase
+    .from('messages')
+    .select('*')
+    .eq('friend_id', friendId)
+    .order('created_at', { ascending: true });
+
+  if (since) query = query.gte('created_at', since);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
+export async function loadLatestMessageMeta() {
+  const { data, error } = await supabase
+    .from('messages')
+    .select('id, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return data[0] ?? null;
+}
+
+// owner 專用：跨所有對話串，只回傳辨識用欄位（體積很小）
+export async function loadInboxSince(since) {
+  let query = supabase
+    .from('messages')
+    .select('id, friend_id, sender_id, created_at')
+    .order('created_at', { ascending: true });
+
+  if (since) query = query.gte('created_at', since);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data;
+}
+
 export async function sendTextMessage(friendId, senderId, text, replyTo) {
   const { error } = await supabase
     .from('messages')
@@ -101,7 +142,7 @@ export async function deleteMessage(row) {
   if (error) throw error;
 }
 
-export function subscribeToThread(friendId, { onInsert, onDelete, onUpdate, onReadStateChange, onTyping }) {
+export function subscribeToThread(friendId, { onInsert, onDelete, onUpdate, onReadStateChange, onTyping, onStatus }) {
   const channel = supabase
     .channel(`messages-${friendId}`)
     .on(
@@ -145,7 +186,7 @@ export function subscribeToThread(friendId, { onInsert, onDelete, onUpdate, onRe
       (payload) => onReadStateChange?.(payload.new)
     )
     .on('broadcast', { event: 'typing' }, (payload) => onTyping?.(payload.payload.senderId))
-    .subscribe();
+    .subscribe((status, err) => onStatus?.(status, err));
 
   return channel;
 }
@@ -155,7 +196,7 @@ export function broadcastTyping(channel, senderId) {
   channel.send({ type: 'broadcast', event: 'typing', payload: { senderId } });
 }
 
-export function subscribeToOwnerInbox(onInsert) {
+export function subscribeToOwnerInbox(onInsert, onStatus) {
   const channel = supabase
     .channel('owner-inbox')
     .on(
@@ -163,7 +204,7 @@ export function subscribeToOwnerInbox(onInsert) {
       { event: 'INSERT', schema: 'public', table: 'messages' },
       (payload) => onInsert(payload.new)
     )
-    .subscribe();
+    .subscribe((status, err) => onStatus?.(status, err));
 
   return channel;
 }
