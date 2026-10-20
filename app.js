@@ -20,6 +20,7 @@ import {
 } from './chat.js';
 import { trackPresence, subscribeOnlineUsers } from './presence.js';
 import { logConn } from './connlog.js';
+import { cleanupOrphanImages } from './cleanup.js';
 
 const loadingView = document.getElementById('loading-view');
 const loginView = document.getElementById('login-view');
@@ -495,6 +496,7 @@ async function initApp(user) {
       logConn('inbox-channel', status);
       if (status === 'SUBSCRIBED') checkInbox('subscribed');
     });
+    scheduleImageCleanup();
   } else {
     friendListEl.classList.add('hidden');
     setSidebarCollapsed(true, false);
@@ -511,6 +513,27 @@ async function initApp(user) {
   }
 
   startPolling();
+}
+
+// ---------- 圖片清理（owner 登入時，清掉訊息已被 7 天自動清除的殘留圖片）----------
+
+const CLEANUP_KEY = 'chatweb-last-image-cleanup';
+const CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+function scheduleImageCleanup() {
+  // 等聊天室載入完再跑，不跟開啟畫面搶資源；6 小時內跑過就不重複跑
+  setTimeout(async () => {
+    const last = Number(localStorage.getItem(CLEANUP_KEY)) || 0;
+    if (Date.now() - last < CLEANUP_INTERVAL_MS) return;
+
+    try {
+      const result = await cleanupOrphanImages(supabase);
+      localStorage.setItem(CLEANUP_KEY, String(Date.now()));
+      logConn('image-cleanup', JSON.stringify(result));
+    } catch (err) {
+      logConn('image-cleanup-error', err.message);
+    }
+  }, 15000);
 }
 
 // ---------- Owner inbox（其他對話串的新訊息：未讀數字 + 通知）----------
